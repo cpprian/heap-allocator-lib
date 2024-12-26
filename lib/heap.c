@@ -149,16 +149,11 @@ void heap_clean(void) {
     }
 
     // clear first_chunk
-    for (struct memory_chunk_t* chunk = memory_manager.first_chunk; 
-        chunk != NULL;) 
-    {
+    struct memory_chunk_t* chunk = memory_manager.first_chunk;
+    while (chunk != NULL) {
         chunk->size = 0;
         chunk->prev = NULL;
-
         struct memory_chunk_t* next = chunk->next;
-        if (next != NULL) {
-            break;
-        }
         chunk->next = NULL;
         chunk = next;
     }
@@ -169,6 +164,7 @@ void heap_clean(void) {
 
     // clear memory_manager
     memory_manager.memory_start = NULL;
+    memory_manager.first_chunk = NULL;
 }
 
 int heap_validate(void) {
@@ -180,18 +176,18 @@ int heap_validate(void) {
         chunk != NULL; 
         chunk = chunk->next) 
     {
-        // check is user write to control block
-        size_t checksum = sum_control_block(chunk);
-        if (checksum != chunk->checksum) {
+        // Check if user wrote to control block
+        if (sum_control_block(chunk) != chunk->checksum) {
             return 3;
         }
-        // check is user write to fenceposts
-        for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
-            if ((*((char*)chunk + MEMORY_CHUNK_SIZE + i) != FENCEPOST_VALUE ||
-                *((char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE + chunk->size + i) != FENCEPOST_VALUE) &&
-                chunk->free == 0) 
-            {
-                return 1;
+        // Check if user wrote to fenceposts
+        if (!chunk->free) {
+            char* chunk_start = (char*)chunk + MEMORY_CHUNK_SIZE;
+            char* chunk_end = chunk_start + FENCEPOST_SIZE + chunk->size;
+            for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
+                if (chunk_start[i] != FENCEPOST_VALUE || chunk_end[i] != FENCEPOST_VALUE) {
+                    return 1;
+                }
             }
         }
     }
@@ -232,5 +228,238 @@ void checksum_all_chunks() {
         chunk = chunk->next) 
     {
         chunk->checksum = sum_control_block(chunk);
+    }
+}
+
+void* heap_malloc(size_t size) {
+    if (size <= 0) {
+        return NULL;
+    }
+    // align size
+    // size = ALIGN(size);
+
+    // find free chunk
+    void* ptr = find_free_chunk(size);
+    if (ptr != NULL) {
+        return ptr;
+    }
+
+    // allocate memory
+    void* memory = custom_sbrk(size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2);
+    if (memory == (void*) -1) {
+        return NULL;
+    }
+    memory_manager.memory_size += size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2;
+
+    struct memory_chunk_t* chunk = NULL;
+
+    // update memory_manager
+    if (memory_manager.first_chunk == NULL) {
+        chunk = (struct memory_chunk_t*) memory;
+        chunk->size = size;
+        chunk->next = NULL;
+        chunk->prev = NULL;
+        chunk->free = 0;
+
+        memory_manager.first_chunk = chunk;
+    } else {
+        chunk = memory_manager.first_chunk;
+        while (chunk->next != NULL) {
+            chunk = chunk->next;
+        }
+
+        chunk->next = (struct memory_chunk_t*) memory;
+        chunk->next->size = size;
+        chunk->next->next = NULL;
+        chunk->next->prev = chunk;
+        chunk->next->free = 0;
+
+        chunk = chunk->next;
+    }
+
+    add_fenceposts(chunk);
+    // chunk->checksum = sum_control_block(chunk);
+    checksum_all_chunks();
+    return (char*)memory + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE;
+}
+
+void* heap_calloc(size_t number, size_t size) {
+    if (number <= 0 || size <= 0) {
+        return NULL;
+    }
+    void* ptr = heap_malloc(number * size);
+    if (ptr == NULL) {
+        return NULL;
+    }
+    memset(ptr, 0, number * size);
+    return ptr;
+}  
+
+void* heap_realloc(void* memblock, size_t count) {
+    if (memory_manager.memory_start == NULL) {
+        return NULL;
+    }
+    if (memblock == NULL) {
+        return heap_malloc(count);
+    } else if (count <= 0) {
+        heap_free(memblock);
+        return NULL;
+    }
+
+    struct memory_chunk_t* chunk = (struct memory_chunk_t*)((char*)memblock - MEMORY_CHUNK_SIZE - FENCEPOST_SIZE);
+    if ((long)chunk->size <= -20000 || (long)chunk->size >= 20000) {
+        return NULL;
+    }
+
+    size_t temp_size = chunk->size;
+    heap_free(memblock);
+
+    if (chunk->next == NULL && chunk->size < count) {
+        size_t to_add = count - chunk->size;
+        void* memory = custom_sbrk(to_add + FENCEPOST_SIZE);
+        if (memory == (void*) -1) {
+            chunk->free = 0;
+            chunk->size = temp_size;
+            chunk->checksum = sum_control_block(chunk);
+            add_fenceposts(chunk);
+            return NULL;
+        }
+        memory_manager.memory_size += to_add + FENCEPOST_SIZE;
+
+        chunk->size += to_add;
+        // chunk->checksum = sum_control_block(chunk);
+        checksum_all_chunks();
+        for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
+            *((char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE + chunk->size + i) = FENCEPOST_VALUE;
+        }
+    }
+
+    if (chunk->size >= count) {
+        chunk->size = count;
+        chunk->free = 0;
+        for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
+            *((char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE + chunk->size + i) = FENCEPOST_VALUE;
+        }
+    } else if (chunk->free == 1 && 
+                chunk->next != NULL && 
+                chunk->next->free == 1 && 
+                chunk->size + chunk->next->size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2 >= count) 
+    {
+        chunk->size = count;
+        if (chunk->next->next != NULL) {
+            chunk->next->next->prev = chunk;
+        }
+        chunk->next = chunk->next->next;
+        chunk->free = 0;
+        checksum_all_chunks();
+        for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
+            *((char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE + chunk->size + i) = FENCEPOST_VALUE;
+        }
+    } else if (chunk->size < count) {
+        void* ptr = heap_malloc(count);
+        if (ptr == NULL) {
+            chunk->free = 0;
+            chunk->size = temp_size;
+            // chunk->checksum = sum_control_block(chunk);
+            checksum_all_chunks();
+            add_fenceposts(chunk);
+            return NULL;
+        }
+        memcpy(ptr, memblock, chunk->size);
+
+        memblock = ptr;
+        return memblock;
+    } 
+    // chunk->checksum = sum_control_block(chunk);
+    checksum_all_chunks();
+    return memblock;
+}             
+
+void heap_free(void* memblock) {
+    if (memory_manager.memory_start == NULL) {
+        return;
+    }
+    if (memblock == NULL) {
+        return;
+    }
+    if (get_pointer_type(memblock) != pointer_valid) {
+        printf("ERROR: invalid pointer\n");
+        return;
+    }
+
+    struct memory_chunk_t* chunk = (struct memory_chunk_t*)((char*)memblock - MEMORY_CHUNK_SIZE - FENCEPOST_SIZE);
+    if (chunk->free == 1) {
+        return;
+    }
+    chunk->free = 1;
+    // chunk->checksum = sum_control_block(chunk);
+    checksum_all_chunks();
+
+    // add add unalocated size to chunk
+    long free_space = check_is_space_between_two_chunks(chunk);
+    if (free_space < 0) {
+        chunk->size += free_space * -1;
+        // chunk->checksum = sum_control_block(chunk);
+        checksum_all_chunks();
+    }
+
+    // merge free chunks
+    merge_chunks(chunk);
+}
+
+void merge_chunks(struct memory_chunk_t* chunk) {
+    if (chunk->next != NULL && chunk->next->free == 1) {
+        chunk->size += chunk->next->size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE;
+        chunk->next = chunk->next->next;
+        if (chunk->next != NULL) {
+            chunk->next->prev = chunk;
+        }
+        checksum_all_chunks();
+    }
+
+    if (chunk->prev != NULL && chunk->prev->free == 1) {
+        chunk->prev->size += chunk->size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE;
+        chunk->prev->next = chunk->next;
+        if (chunk->next != NULL) {
+            chunk->next->prev = chunk->prev;
+        }
+        checksum_all_chunks();
+    }
+}
+
+long check_is_space_between_two_chunks(struct memory_chunk_t* chunk) {
+    long size = 0;
+    if (chunk->next == NULL) {
+        size = (char*)chunk - (char*)memory_manager.memory_start + memory_manager.memory_size;
+    } else {
+        size = (char*)chunk - (char*)chunk->next;
+    }
+    return size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2 + chunk->size;
+}
+
+void* find_free_chunk(size_t size) {
+    for (struct memory_chunk_t* chunk = memory_manager.first_chunk; 
+        chunk != NULL; 
+        chunk = chunk->next) 
+    {
+        if (chunk->free == 1 && chunk->size >= size) {
+            chunk->free = 0;
+            chunk->size = size;
+            add_fenceposts(chunk);
+            if ((void*)chunk == memory_manager.memory_start) {
+                chunk->checksum = sum_control_block(chunk);
+                return (char*)memory_manager.memory_start + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE;
+            }
+            checksum_all_chunks();
+            return (char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE;
+        }
+    }
+    return NULL;
+}
+
+void add_fenceposts(struct memory_chunk_t* chunk) {
+    for (size_t i = 0; i < FENCEPOST_SIZE; i++) {
+        *((char*)chunk + MEMORY_CHUNK_SIZE + i) = FENCEPOST_VALUE;
+        *((char*)chunk + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE + chunk->size + i) = FENCEPOST_VALUE;
     }
 }
