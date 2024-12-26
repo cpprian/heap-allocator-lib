@@ -62,7 +62,7 @@ int heap_validate(void);
 long check_is_space_between_two_chunks(struct memory_chunk_t* chunk);
 void merge_chunks(struct memory_chunk_t* chunk);
 void* find_free_chunk(size_t size);
-void add_fenceposts(struct memroy_chunk_t* chunk);
+void add_fenceposts(struct memory_chunk_t* chunk);
 void fill_control_block(struct memory_chunk_t* chunk);
 size_t sum_control_block(struct memory_chunk_t* chunk);
 
