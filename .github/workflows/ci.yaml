@@ -26,4 +26,4 @@ jobs:
 
     - name: Check for style errors
       run: |
-        clang-format -n -i example_main.c lib/heap.c include/heap.h
+        clang-format -i example_main.c lib/heap.c include/heap.h
