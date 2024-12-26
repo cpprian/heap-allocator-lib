@@ -1,4 +1,4 @@
-#include "heap.h"
+#include "../include/heap.h"
 
 struct memory_manager_t memory_manager;
 
@@ -42,12 +42,12 @@ enum pointer_type_t get_pointer_type(const void* const pointer) {
             return pointer_valid;
         } else if (is_unallocated(pointer, chunk)) {
             return pointer_unallocated;
-        } else if (check = is_inside_data_block(pointer, chunk)) {
+        } else if ((check = is_inside_data_block(pointer, chunk))) {
             if (check == 2) {
                 return pointer_unallocated;
             }
             return pointer_inside_data_block;
-        } else if (check = is_inside_fences(pointer, chunk)) {
+        } else if ((check = is_inside_fences(pointer, chunk))) {
             if (check == 2) {
                 return pointer_unallocated;
             }
@@ -132,8 +132,8 @@ int heap_setup(void) {
         heap_clean();
     }
 
-    // TODO: implement own custom_sbrk
-    memory_manager.memory_start = custom_sbrk(0);
+    // TODO: implement own sbrk
+    memory_manager.memory_start = sbrk(0);
     if (memory_manager.memory_start == (void*) -1) {
         return 1;
     }
@@ -159,7 +159,7 @@ void heap_clean(void) {
     }
 
     // clear sbrk
-    custom_sbrk(-memory_manager.memory_size);
+    sbrk(-memory_manager.memory_size);
     memory_manager.memory_size = 0;
 
     // clear memory_manager
@@ -245,7 +245,7 @@ void* heap_malloc(size_t size) {
     }
 
     // allocate memory
-    void* memory = custom_sbrk(size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2);
+    void* memory = sbrk(size + MEMORY_CHUNK_SIZE + FENCEPOST_SIZE * 2);
     if (memory == (void*) -1) {
         return NULL;
     }
@@ -316,7 +316,7 @@ void* heap_realloc(void* memblock, size_t count) {
 
     if (chunk->next == NULL && chunk->size < count) {
         size_t to_add = count - chunk->size;
-        void* memory = custom_sbrk(to_add + FENCEPOST_SIZE);
+        void* memory = sbrk(to_add + FENCEPOST_SIZE);
         if (memory == (void*) -1) {
             chunk->free = 0;
             chunk->size = temp_size;

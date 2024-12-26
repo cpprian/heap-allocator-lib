@@ -1,0 +1,29 @@
+name: Heap allocator CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential valgrind
+
+    - name: Compile and run tests
+      run: |
+        gcc -o main example_main.c lib/heap.c -Ilib
+        valgrind --leak-check=full ./main 
+
+    - name: Check for style errors
+      run: |
+        clang-format -n -i example_main.c lib/heap.c include/heap.h

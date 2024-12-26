@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 // Constants
 //
@@ -22,7 +23,7 @@
 struct memory_manager_t {
     void* memory_start;
     size_t memory_size;
-    struct memory_chunkt_t* first_chunk;
+    struct memory_chunk_t* first_chunk;
 };
 
 struct memory_chunk_t {
@@ -47,7 +48,7 @@ enum pointer_type_t
 // Tools for memory manager to verify is the pointer valid in the heap
 //
 enum pointer_type_t get_pointer_type(const void* const pointer);
-int is_inside_data_block(const void* const pointer, struct memory_chunkt_t* chunk);
+int is_inside_data_block(const void* const pointer, struct memory_chunk_t* chunk);
 int is_inside_fences(const void* const pointer, struct memory_chunk_t* chunk);
 int is_inside_control_block(const void* const, struct memory_chunk_t* chunk);
 int is_unallocated(const void* const pointer, struct memory_chunk_t* chunk);
@@ -57,8 +58,8 @@ size_t heap_get_largest_used_block_size(void);
 // Memory manager functions
 //
 int heap_setup(void);
-void heap_heal(void);
 int heap_validate(void);
+void heap_clean(void);
 long check_is_space_between_two_chunks(struct memory_chunk_t* chunk);
 void merge_chunks(struct memory_chunk_t* chunk);
 void* find_free_chunk(size_t size);
